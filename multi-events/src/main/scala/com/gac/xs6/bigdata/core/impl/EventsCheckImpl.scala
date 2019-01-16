@@ -81,7 +81,7 @@ object EventsCheckImpl extends EventsCheck with Logging {
             val eventName   = ev._1
             val eventUpdate = ev._2
 
-            if ( (newTime - eventUpdate.eventEndTime) >= eventDuration.milliseconds ) { // 事件正常结束
+            if ( (newTime - eventUpdate.eventEndTime) > eventDuration.milliseconds ) { // 事件正常结束
 
               eventUpdate.eventStatus = 0  // 将事件类型置为 0, 即结束上一段事件
 
@@ -145,8 +145,13 @@ object EventsCheckImpl extends EventsCheck with Logging {
   def getUpdatedEvent(data: Event, eventName: String, lastEvents: mutable.HashMap[String,EventUpdate]): mutable.HashMap[String,EventUpdate] = {
 
     val ts: Long = data.ts
-    lastEvents(eventName).eventEndTime = ts // 事件正在进行, 将上一个事件的事件结束时间置为新的数据源的 ts
-    lastEvents(eventName).eventStatus  = 1  // 事件正在进行, 这这种类型的事件状态置为 1
+
+    // 只有出现事件时才更新事件结束时间
+    if (data.eventMaps.contains(eventName)) {
+      lastEvents(eventName).eventEndTime = ts // 事件正在进行, 将上一个事件的事件结束时间置为新的数据源的 ts
+      lastEvents(eventName).eventStatus  = 1  // 事件正在进行, 这这种类型的事件状态置为 1
+    }
+
     lastEvents
   }
 
@@ -172,7 +177,7 @@ object EventsCheckImpl extends EventsCheck with Logging {
         }
       }
 
-      lastState.clone()
+      lastState
 
     } else { // 如果 state 不存在, 说明这一批都是新数据, 则使用 event 数据源创建一个新的 eventUpdate 并返回这个对象，不操作内存中的 state
       val dataEvents: mutable.HashMap[String, Integer] = data.eventMaps // 获取 event 数据源 Map 中的事件
@@ -196,10 +201,13 @@ object EventsCheckImpl extends EventsCheck with Logging {
     */
   def initState(data: Event, eventName: String, state: State[mutable.HashMap[String, EventUpdate]]) = {
 
-    val newEvent = initEvent(data, eventName)
-    val lastState: mutable.HashMap[String, EventUpdate] = state.get()
-    lastState.put(eventName, newEvent)
-    state.update(lastState)
+    // 只有数据中存在该事件时才初始化
+    if (data.eventMaps.contains(eventName)) {
+      val newEvent = initEvent(data, eventName)
+      val lastState: mutable.HashMap[String, EventUpdate] = state.get()
+      lastState.put(eventName, newEvent)
+      state.update(lastState)
+    }
   }
 
   // 初始化单个事件的输出对象
