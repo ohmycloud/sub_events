@@ -6,6 +6,7 @@ import com.gac.xs6.bigdata.model.{Event, EventUpdate}
 import org.apache.spark.streaming.{Duration, State, StateSpec}
 import org.apache.spark.streaming.dstream.DStream
 import scala.collection.mutable
+import scala.collection.mutable.ArrayBuffer
 
 /**
   * 事件检测
@@ -20,7 +21,7 @@ object EventsCheckImpl extends EventsCheck with Logging {
     * @param stream (vin, Event) 事件流
     * @return 事件状态流,(vin, HashMap[eventName, eventState])
     */
-  override def extract(stream: DStream[(String, Event)]): DStream[(String,  mutable.HashMap[String,EventUpdate])] = {
+  override def extract(stream: DStream[(String, Event)]): DStream[(String,  ArrayBuffer[EventUpdate])] = {
     stream.mapWithState(eventStateSpec)
       .flatMap(opt => opt)
   }
@@ -34,7 +35,7 @@ object EventsCheckImpl extends EventsCheck with Logging {
     * @param state HashMap[eventName, EventUpdate]
     * @return (vin, HashMap[eventName, EventUpdate])
     */
-  def mappingEvent(vin: String, opt: Option[Event], state: State[mutable.HashMap[String, EventUpdate]]): Option[(String, mutable.HashMap[String, EventUpdate])] = {
+  def mappingEvent(vin: String, opt: Option[Event], state: State[mutable.HashMap[String, EventUpdate]]): Option[(String, ArrayBuffer[EventUpdate])] = {
     // 事件名列表
     val eventsList = List(
       "alm_common_temp_diff",
@@ -58,18 +59,35 @@ object EventsCheckImpl extends EventsCheck with Logging {
       "alm_common_esd_charge_over"
     )
 
-    // val sinkUpdate: mutable.HashMap[String, EventUpdate] = scala.collection.mutable.HashMap() // 全局的存放输出结果
+    val arrayResult = new ArrayBuffer[EventUpdate]()  // 保存返回的 EventUpdate 数组
 
     if (state.isTimingOut() && state.exists()) {
       val lastState = state.get()
 
-      lastState.map { ev => ev._2.eventStatus = 2 }  // 超时的事件, 状态置为 2
-      Some((vin, lastState))                         // 发送到 downstream, 但不移除状态
+      val resultArray = new ArrayBuffer[EventUpdate]()
+
+      lastState.map { ev =>
+        val event = ev._2
+
+        val updatedEvent = EventUpdate(
+          vin             = event.vin,
+          eventName       = event.eventName,
+          eventStartTime  = event.eventStartTime,
+          eventEndTime    = event.eventEndTime,
+          eventStatus     = 2,
+          eventType       = event.eventType,
+          startMileage    = event.startMileage
+        )
+
+        resultArray.append(updatedEvent)
+
+      }  // 超时的事件, 状态置为 2
+      Some((vin, resultArray))                    // 发送到 downstream, 但不移除状态
     } else opt.flatMap( data => {
 
       val dataEvents = data.eventMaps             // data 中的 eventMaps
       val newTime    = data.ts                    // 新的数据的时间戳
-      val lastEvents  = getLastEvent(data, state) // 获取每个事件上一次的状态
+      var lastEvents: mutable.HashMap[String,EventUpdate]  = getLastEvent(data, state, arrayResult) // 获取每个事件上一次的状态
 
       eventsList.map { topicEvent =>
 
@@ -96,11 +114,14 @@ object EventsCheckImpl extends EventsCheck with Logging {
                 f"事件持续时长:  $eventDuration"
               )
 
-              initState(data, eventName, state)  // 初始化新的事件
+
+              arrayResult.append(eventUpdate)                    // 将结束的事件放到结果数组中
+              initState(data, eventName, state)                  // 初始化新的事件
+              arrayResult.append(state.get().get(eventName).get) // 将新的事件放到结果数组中
 
             } else { // 事件正在进行
-              val updatedState = getUpdatedEvent(data, eventName, lastEvents)
-              state.update(updatedState) // 用 newState 更新旧的状态
+              lastEvents = getUpdatedEvent(data, eventName, lastEvents)
+              state.update(lastEvents) // 用 newState 更新旧的状态
               None  // 在内存中更新事件, 不返回东西
             }
           }
@@ -110,15 +131,16 @@ object EventsCheckImpl extends EventsCheck with Logging {
         ) {
 
           initState(data, topicEvent, state) // 新建 state, 需要更新 state
+          arrayResult.append(state.get().get(topicEvent).get)
 
         } else if (!dataEvents.contains(topicEvent) && // 该事件这次没有出现
                     lastEvents.contains(topicEvent)    // 该事件之前已经出现
         ) {
           // 更新事件的状态, 比如事件结束时间
           lastEvents.map { ev =>
-            val eventName   = ev._1
-            val updatedState = getUpdatedEvent(data, eventName, lastEvents)
-            state.update(updatedState)
+            //val eventName   = ev._1
+            //val updatedState = getUpdatedEvent(data, eventName, lastEvents)
+            //state.update(updatedState)
             None  // 在内存中更新事件, 不返回东西
           }
         } else {
@@ -126,8 +148,8 @@ object EventsCheckImpl extends EventsCheck with Logging {
         }
       }
 
-      if (lastEvents.size > 0) {
-        Some(vin, lastEvents)
+      if (arrayResult.size > 0) {
+        Some(vin, arrayResult)
       } else {
         None
       }
@@ -161,7 +183,7 @@ object EventsCheckImpl extends EventsCheck with Logging {
     * @param state HashMap[evName, EventUpdate]
     * @return HashMap[evName, EventUpdate]
     */
-  def getLastEvent(data: Event, state: State[mutable.HashMap[String, EventUpdate]]): mutable.HashMap[String,EventUpdate] = {
+  def getLastEvent(data: Event, state: State[mutable.HashMap[String, EventUpdate]], result: ArrayBuffer[EventUpdate]): mutable.HashMap[String,EventUpdate] = {
 
     if (state.exists()) {
       val dataEvents = data.eventMaps // 获取 data 中的 events
@@ -172,21 +194,25 @@ object EventsCheckImpl extends EventsCheck with Logging {
         if (lastState.contains(eventName)) { // state 里面包含已经出现的事件, 什么也不做，最后原样取回
             None  // 什么也不做, 没有副作用
         } else {  // state 中不包含该事件名, 要给该事件一个初始化状态， 就是在 lastState 里面加上一个新的键，而已
-          val newEvent = initEvent(data, eventName)
+          val newEvent: EventUpdate = initEvent(data, eventName)
           lastState.put(eventName, newEvent)
+          result.append(newEvent)
         }
       }
 
       lastState
 
     } else { // 如果 state 不存在, 说明这一批都是新数据, 则使用 event 数据源创建一个新的 eventUpdate 并返回这个对象，不操作内存中的 state
+
+
       val dataEvents: mutable.HashMap[String, Integer] = data.eventMaps // 获取 event 数据源 Map 中的事件
       val eventUpdateMaps: mutable.HashMap[String, EventUpdate] = scala.collection.mutable.HashMap() // 存放输出事件的 Map
 
       dataEvents.map { ev =>
         val eventName = ev._1
-        val newEvent = initEvent(data, eventName)
+        val newEvent: EventUpdate = initEvent(data, eventName)
         eventUpdateMaps.put(eventName, newEvent)
+        result.append(newEvent)
       }
 
       eventUpdateMaps
@@ -196,17 +222,25 @@ object EventsCheckImpl extends EventsCheck with Logging {
   /**
     * 初始化一个新的事件
     * @param data 数据源
-    * @param evName 事件名
+    * @param eventName 事件名
     * @param state HashMap[eventName, EventUpdate]
     */
   def initState(data: Event, eventName: String, state: State[mutable.HashMap[String, EventUpdate]]) = {
 
     // 只有数据中存在该事件时才初始化
     if (data.eventMaps.contains(eventName)) {
-      val newEvent = initEvent(data, eventName)
-      val lastState: mutable.HashMap[String, EventUpdate] = state.get()
-      lastState.put(eventName, newEvent)
-      state.update(lastState)
+
+      if (state.exists()) {
+        val newEvent = initEvent(data, eventName)
+        val lastState: mutable.HashMap[String, EventUpdate] = state.get()
+        lastState.put(eventName, newEvent)
+        state.update(lastState)
+      } else {
+        val eventUpdateMaps: mutable.HashMap[String, EventUpdate] = scala.collection.mutable.HashMap() // 存放输出事件的 Map
+        val newEvent = initEvent(data, eventName)
+        eventUpdateMaps.put(eventName, newEvent)
+        state.update(eventUpdateMaps)
+      }
     }
   }
 

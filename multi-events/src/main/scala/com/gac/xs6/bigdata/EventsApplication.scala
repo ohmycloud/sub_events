@@ -16,6 +16,7 @@ import scopt.OptionParser
 import org.apache.spark.SparkContext
 
 import scala.collection.mutable
+import scala.collection.mutable.ArrayBuffer
 
 object EventsApplication extends App with Logging {
   logInfo("socket streaming started")
@@ -66,7 +67,7 @@ class EventsApplication @Inject() (
 
     val eventsExactStream: DStream[(String,Event)] = eventsExact.extract(sourceDstream)
 
-    val eventsCheckStream: DStream[(String,  mutable.HashMap[String,EventUpdate])] = eventsCheck.extract(eventsExactStream)
+    val eventsCheckStream: DStream[(String,  ArrayBuffer[EventUpdate])] = eventsCheck.extract(eventsExactStream)
 
     val result = eventsCheckStream.filter(x => null != x).filter( y => None != y).filter( z => z._2.size > 0)
 
