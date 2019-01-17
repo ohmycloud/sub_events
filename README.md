@@ -2,7 +2,7 @@
 
 运行 perl6 fake-streaming.pl6, 每隔 5 秒往 0.0.0.0 地址的 3333 Socket 端口发送一行 JSON 样本数据：
 
-```json
+```
 {'vin':'LSJA0000000000091','ts':1547727950000,'veh_odo':0,'alm_common_temp_diff':0,'alm_common_temp_high':1,'alm_common_esd_high':1}
 {'vin':'LSJA0000000000091','ts':1547727955000,'veh_odo':1,'alm_common_temp_diff':1,'alm_common_temp_high':1,'alm_common_esd_high':0}
 {'vin':'LSJA0000000000091','ts':1547727960000,'veh_odo':2,'alm_common_temp_diff':1,'alm_common_temp_high':1,'alm_common_esd_high':1}
@@ -64,8 +64,8 @@ object EventUpdate {}
 
 要求输出这三种类型的事件：
 
-a)、当事件第一次发生时①
-b)、俩个事件之前的事件之差超过 15 秒时, 则结束上一个事件②, 并开始一个新的事件③;
+a)、当事件第一次发生时①  
+b)、俩个事件之前的事件之差超过 15 秒时, 则结束上一个事件②, 并开始一个新的事件③;  
 
 ## 配置文件
 
