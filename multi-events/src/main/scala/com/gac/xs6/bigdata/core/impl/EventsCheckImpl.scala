@@ -19,7 +19,7 @@ object EventsCheckImpl extends EventsCheck with Logging {
   /**
     * 将每辆车的事件流转为事件状态流
     * @param stream (vin, Event) 事件流
-    * @return 事件状态流,(vin, HashMap[eventName, eventState])
+    * @return 事件状态流,(vin, ArrayBuffer[EventUpdate])
     */
   override def extract(stream: DStream[(String, Event)]): DStream[(String,  ArrayBuffer[EventUpdate])] = {
     stream.mapWithState(eventStateSpec)
@@ -33,7 +33,7 @@ object EventsCheckImpl extends EventsCheck with Logging {
     * @param vin 车架号,
     * @param opt Event 事件流
     * @param state HashMap[eventName, EventUpdate]
-    * @return (vin, HashMap[eventName, EventUpdate])
+    * @return (vin, ArrayBuffer[EventUpdate])
     */
   def mappingEvent(vin: String, opt: Option[Event], state: State[mutable.HashMap[String, EventUpdate]]): Option[(String, ArrayBuffer[EventUpdate])] = {
     // 事件名列表
@@ -141,7 +141,7 @@ object EventsCheckImpl extends EventsCheck with Logging {
             //val eventName   = ev._1
             //val updatedState = getUpdatedEvent(data, eventName, lastEvents)
             //state.update(updatedState)
-            None  // 在内存中更新事件, 不返回东西
+            None  // 没有发生事件, 什么也不做
           }
         } else {
           None
@@ -160,9 +160,9 @@ object EventsCheckImpl extends EventsCheck with Logging {
   /**
     * 事件正在进行, 则更新内存中的 state 对象, 不划分
     * @param data 数据源
-    * @param evName 事件名
-    * @param lastState 上一个 event 的状态
-    * @return
+    * @param eventName 事件名
+    * @param lastEvents 上一个 event 的状态
+    * @return HashMap[eventName,EventUpdate]
     */
   def getUpdatedEvent(data: Event, eventName: String, lastEvents: mutable.HashMap[String,EventUpdate]): mutable.HashMap[String,EventUpdate] = {
 
